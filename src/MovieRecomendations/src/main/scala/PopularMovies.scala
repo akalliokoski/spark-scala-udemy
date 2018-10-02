@@ -1,9 +1,35 @@
 
+import java.nio.charset.CodingErrorAction
+
 import org.apache.spark._
 import org.apache.log4j._
 
+import scala.io.{Codec, Source}
+
 /** Find the movies with the most ratings. */
 object PopularMovies {
+
+  /** Load up a Map of movie IDs to movie names. */
+  def loadMovieNames() : Map[Int, String] = {
+
+    // Handle character encoding issues:
+    implicit val codec = Codec("UTF-8")
+    codec.onMalformedInput(CodingErrorAction.REPLACE)
+    codec.onUnmappableCharacter(CodingErrorAction.REPLACE)
+
+    // Create a Map of Ints to Strings, and populate it from u.item.
+    var movieNames : Map[Int, String] = Map()
+
+    val lines = Source.fromFile("../../ml-100k/u.item").getLines()
+    for (line <- lines) {
+      val fields = line.split('|')
+      if (fields.length > 1) {
+        movieNames += (fields(0).toInt -> fields(1))
+      }
+    }
+
+    return movieNames
+  }
 
   def main(args: Array[String]) {
    
@@ -11,7 +37,10 @@ object PopularMovies {
     Logger.getLogger("org").setLevel(Level.ERROR)
     
      // Create a SparkContext using every core of the local machine
-    val sc = new SparkContext("local[*]", "PopularMovies")   
+    val sc = new SparkContext("local[*]", "PopularMovies")
+
+    // Create a broadcast variable of our ID -> movie name map
+    val nameDict = sc.broadcast(loadMovieNames)
     
     // Read in each rating line
     val lines = sc.textFile("../../ml-100k/u.data")
@@ -29,9 +58,13 @@ object PopularMovies {
     val sortedMovies = movieCounts
       .map( x => (x._2, x._1) )
       .sortByKey()
-    
+
+    // Fold in the movie names from the broadcast variable
+    val sortedMoviesWithNames = sortedMovies.map( x  => (nameDict.value(x._2), x._1) )
+
     // Collect and print results
-    val results = sortedMovies.collect()
+    val results = sortedMoviesWithNames.collect()
+
     results.foreach(println)
   }
   
